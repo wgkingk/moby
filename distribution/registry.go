@@ -17,6 +17,7 @@ import (
 	"github.com/docker/docker/dockerversion"
 	"github.com/docker/docker/registry"
 	ocispec "github.com/opencontainers/image-spec/specs-go/v1"
+	"golang.org/x/net/http/httpproxy"
 )
 
 // ImageTypes represents the schema2 config types for images
@@ -81,8 +82,16 @@ func NewV2Repository(
 		DisableKeepAlives: true,
 	}
 
+	noProxy := base.Clone()
+	noProxy.Proxy = nil
+
 	modifiers := registry.Headers(dockerversion.DockerUserAgent(ctx), metaHeaders)
 	authTransport := transport.NewTransport(base, modifiers...)
+	var hasProxy bool
+	if proxyConfig := httpproxy.FromEnvironment(); proxyConfig.HTTPSProxy != "" || proxyConfig.HTTPProxy != "" {
+		hasProxy = true
+		authTransport = NewMixTransport(authTransport, transport.NewTransport(noProxy, modifiers...))
+	}
 
 	challengeManager, foundVersion, err := registry.PingV2Registry(endpoint.URL, authTransport)
 	if err != nil {
@@ -120,6 +129,9 @@ func NewV2Repository(
 		modifiers = append(modifiers, auth.NewAuthorizer(challengeManager, tokenHandler, basicHandler))
 	}
 	tr := transport.NewTransport(base, modifiers...)
+	if hasProxy {
+		tr = NewMixTransport(tr, transport.NewTransport(noProxy, modifiers...))
+	}
 
 	repoNameRef, err := reference.WithName(repoName)
 	if err != nil {
