@@ -2,6 +2,8 @@ package distribution
 
 import (
 	"bytes"
+	"github.com/docker/distribution/registry/client/transport"
+	"golang.org/x/net/http/httpproxy"
 	"io"
 	"net/http"
 	"os"
@@ -10,16 +12,27 @@ import (
 
 var pushReg = regexp.MustCompile(`/v2/.*/blobs/uploads/.*`)
 
-func NewMixTransport(proxy http.RoundTripper, noProxy http.RoundTripper) http.RoundTripper {
+func NewMixTransport(t *http.Transport, modifier... transport.RequestModifier) http.RoundTripper {
+	noproxyTr := t.Clone()
+	noproxyTr.Proxy = nil
+
 	return &MixTransport{
-		proxy,
-		noProxy,
+		transport.NewTransport(t, modifier...),
+		transport.NewTransport(noproxyTr, modifier...),
 	}
 }
 
 type MixTransport struct {
 	proxyTransport   http.RoundTripper
 	noProxyTransport http.RoundTripper
+}
+
+func HasProxy() bool {
+	if proxyConfig := httpproxy.FromEnvironment(); proxyConfig.HTTPSProxy != "" || proxyConfig.HTTPProxy != "" {
+		return true
+	}
+
+	return false
 }
 
 func (t *MixTransport) RoundTrip(req *http.Request) (*http.Response, error) {
